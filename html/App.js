@@ -19,7 +19,7 @@ window.APP = {
 		};
 	},
 	destroyed() {
-		clearInterval(this.focusTimer);
+		//clearInterval(this.focusTimer);
 		window.removeEventListener('message', this.listener);
 	},
 	mounted() {
@@ -60,11 +60,14 @@ window.APP = {
 			if (this.showWindowTimer) {
 				clearTimeout(this.showWindowTimer);
 			}
-			this.focusTimer = setTimeout(() => {
+			setTimeout(() => this.$refs.input.focus(), 100);
+			/*this.focusTimer = setInterval(() => {
 				if (this.$refs.input) {
 					this.$refs.input.focus();
+				} else {
+					clearInterval(this.focusTimer);
 				}
-			}, 100);
+			}, 100);*/
 		},
 		ON_MESSAGE({ message }) {
 			this.messages.push(message);
@@ -249,7 +252,7 @@ window.APP = {
 			}
 			this.message = '';
 			this.showInput = false;
-			clearInterval(this.focusTimer);
+			//clearInterval(this.focusTimer);
 			this.resetShowWindowTimer();
 		},
 		setChannel({channelId}) {
@@ -268,38 +271,6 @@ window.APP = {
 				document.getElementById('channel-staff').style.display = 'inline-block';
 			} else {
 				document.getElementById('channel-staff').style.display = 'none';
-			}
-		},
-		create3dMessage({id, onScreen, screenX, screenY, color, text, timeout}) {
-			let div = document.getElementById('message3d-' + id);
-
-			if (div) {
-				div.remove();
-			}
-
-			div = document.createElement('div');
-			div.id = 'message3d-' + id;
-			div.className = 'message3d';
-			div.style.color = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-			div.innerText = text;
-
-			document.getElementById('message3d').appendChild(div);
-
-			setTimeout(() => div.remove(), timeout);
-		},
-		update3dMessage({id, onScreen, screenX, screenY}) {
-			let div = document.getElementById('message3d-' + id);
-
-			if (div) {
-				if (onScreen) {
-					div.style.display = 'block';
-					let x = screenX * 100 + 'vw';
-					let y = screenY * 100 + 'vh';
-					div.style.top = y;
-					div.style.left = x;
-				} else {
-					div.style.display = 'none';
-				}
 			}
 		},
 	},
@@ -336,20 +307,6 @@ function populateEmojiList(filter) {
 				var evt = new Event('input');
 				input.dispatchEvent(evt);
 				input.focus();
-
-				fetch('https://' + GetParentResourceName() + '/useEmoji', {
-					method: 'POST',
-					headers: {
-						'Content-type': 'application/json'
-					},
-					body: JSON.stringify({
-						emoji: this.innerHTML
-					})
-				}).then(resp => resp.json()).then(resp => {
-					emojis = resp;
-					populateEmojiList(document.getElementById('emoji-search').value);
-				});
-
 			});
 			div.addEventListener('mouseover', function(event) {
 				document.getElementById('emoji-search').placeholder = emoji[0].join(', ');
@@ -368,7 +325,7 @@ window.addEventListener('load', event => {
 		document.getElementById('channel-global').style.color = colorToRgb(resp.globalColor);
 		document.getElementById('channel-staff').style.color = colorToRgb(resp.staffColor);
 
-		emojis = resp.emoji;
+		emojis = JSON.parse(resp.emoji);
 		populateEmojiList();
 	});
 

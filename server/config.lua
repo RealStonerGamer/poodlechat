@@ -36,35 +36,14 @@ ServerConfig.DiscordReportFeedbackFailureMessage = 'Sorry, something went wrong 
 -- Colour for the above feedback message.
 ServerConfig.DiscordReportFeedbackColor = {255, 165, 0}
 
+-- Time in milliseconds between any two Discord requests.
+ServerConfig.DiscordRateLimit = 2000
+
 -- A Steam API key, used for getting avatars from Steam. Leave as '' to disable.
 ServerConfig.SteamKey = ''
 
 -- The ace that grants access to the Staff channel
 ServerConfig.StaffChannelAce = 'chat.staffChannel'
-
--- The ace that allows executing commands from Discord
-ServerConfig.ExecuteCommandsAce = 'chat.executeCommands'
-
--- The prefix used in Discord chat to execute a command
-ServerConfig.ChatCommandPrefix = '!'
-
--- Whether to automatically delete chat commands from the Discord channel
-ServerConfig.DeleteChatCommands = true
-
--- Messages from players with this ace will be visible regardless of them being muted
-ServerConfig.NoMuteAce = 'chat.noMute'
-
--- The primary player identifier used by poodlechat
-ServerConfig.Identifier = 'license'
-
--- Maximum length for player nicknames
-ServerConfig.MaxNicknameLen = 30
-
--- Print chat messages to console
-ServerConfig.PrintToConsole = true
-
--- Framework used to fetch character names. Comment out to disable using character names.
---ServerConfig.Framework = 'VORP'
 
 -- Roles that can appear in front of player names, based on an ace.
 -- Optionally, each role can be given a custom colour.
@@ -75,6 +54,6 @@ ServerConfig.PrintToConsole = true
 -- To show this role for all members of group.admin:
 --   add_ace group.admin chat.admin allow
 ServerConfig.Roles = {
-	--{name = 'Admin', ace = 'chat.admin'},
-	--{name = 'Moderator', color = {0, 255, 0}, ace = 'chat.moderator'}
+	{name = 'Admin',color = {255, 64, 0}, ace = 'chat.admin'},
+	{name = 'Moderator', color = {0, 255, 0}, ace = 'chat.moderator'}
 }

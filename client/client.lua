@@ -11,15 +11,6 @@ local Channel = 'Local'
 -- Whether to hide the chat
 local HideChat = false
 
--- Players who's messages will be blocked
-local MutedPlayers = {}
-
--- Frequencies of emoji usage
-local EmojiUsage = {}
-
--- Display messages above players' heads
-local DisplayMessagesAbovePlayers = ClientConfig.DisplayMessagesAbovePlayersByDefault
-
 RegisterNetEvent('chatMessage')
 RegisterNetEvent('chat:addTemplate')
 RegisterNetEvent('chat:addMessage')
@@ -27,6 +18,7 @@ RegisterNetEvent('chat:addSuggestion')
 RegisterNetEvent('chat:addSuggestions')
 RegisterNetEvent('chat:removeSuggestion')
 RegisterNetEvent('chat:clear')
+RegisterNetEvent('chat:clearall')
 
 -- internal events
 RegisterNetEvent('__cfx_internal:serverPrint')
@@ -110,6 +102,12 @@ AddEventHandler('chat:clear', function(name)
 	SendNUIMessage({
 		type = 'ON_CLEAR'
 	})
+end)
+
+AddEventHandler('chat:clearall', function()
+    SendNUIMessage({
+        type = 'ON_CLEAR'
+    })
 end)
 
 RegisterNUICallback('chatResult', function(data, cb)
@@ -211,7 +209,6 @@ local Permissions = {
 	canAccessStaffChannel = false
 }
 
-RegisterNetEvent('poodlechat:globalMessage')
 RegisterNetEvent('poodlechat:localMessage')
 RegisterNetEvent('poodlechat:action')
 RegisterNetEvent('poodlechat:whisperEcho')
@@ -220,75 +217,17 @@ RegisterNetEvent('poodlechat:whisperError')
 RegisterNetEvent('poodlechat:setReplyTo')
 RegisterNetEvent('poodlechat:staffMessage')
 RegisterNetEvent('poodlechat:setPermissions')
-RegisterNetEvent('poodlechat:mute')
-RegisterNetEvent('poodlechat:unmute')
-RegisterNetEvent('poodlechat:showMuted')
-
-local function getPedScreenCoord(ped)
-	local pedCoords = GetEntityCoords(ped)
-	local myCoords = GetEntityCoords(PlayerPedId())
-
-	if #(myCoords - pedCoords) <= ClientConfig.OverheadMessageDistance then
-		local min, max = GetModelDimensions(GetEntityModel(ped))
-		local zOffset = (max.z - min.z) / 2
-		return GetScreenCoordFromWorldCoord(pedCoords.x, pedCoords.y, pedCoords.z + zOffset)
-	else
-		return false, 0.0, 0.0
-	end
-end
-
-local function displayTextAbovePlayer(serverId, color, text)
-	local player = GetPlayerFromServerId(serverId)
-
-	if player == -1 then
-		return
-	end
-
-	local playerPed = GetPlayerPed(player)
-
-	if not DoesEntityExist(playerPed) then
-		return
-	end
-
-	local timeout = math.min(math.max(ClientConfig.MinOverheadMessageDisplayTime, text:len() * ClientConfig.OverheadMessageDisplayTimePerChar), ClientConfig.MaxOverheadMessageDisplayTime)
-
-	SendNUIMessage {
-		type = "create3dMessage",
-		id = serverId,
-		color = color,
-		text = text,
-		timeout = timeout
-	}
-
-	Citizen.CreateThread(function()
-		local endTime = GetGameTimer() + timeout
-
-		while GetGameTimer() < endTime do
-			local onScreen, screenX, screenY = getPedScreenCoord(playerPed)
-
-			SendNUIMessage {
-				type = 'update3dMessage',
-				id = serverId,
-				onScreen = onScreen,
-				screenX = screenX,
-				screenY = screenY
-			}
-
-			Citizen.Wait(50)
-		end
-	end)
-end
 
 function GlobalCommand(source, args, user)
 	TriggerServerEvent('poodlechat:globalMessage', table.concat(args, ' '))
 end
 
-RegisterCommand('global', GlobalCommand, false)
+--[[ RegisterCommand('global', GlobalCommand, false)
 RegisterCommand('g', GlobalCommand, false)
 
 RegisterCommand('me', function(source, args, raw)
 	TriggerServerEvent('poodlechat:actionMessage', table.concat(args, ' '))
-end, false)
+end, false) ]]
 
 function WhisperCommand(source, args, user)
 	local id = args[1]
@@ -299,39 +238,12 @@ function WhisperCommand(source, args, user)
 	TriggerServerEvent('poodlechat:whisperMessage', id, message)
 end
 
-RegisterCommand('whisper', WhisperCommand, false)
-RegisterCommand('w', WhisperCommand, false)
+--[[ RegisterCommand('whisper', WhisperCommand, false)
+RegisterCommand('w', WhisperCommand, false) ]]
 
 RegisterCommand('clear', function(source, args, user)
 	TriggerEvent('chat:clear', source)
 end, false)
-
-RegisterCommand('toggleoverhead', function(source, args, raw)
-	DisplayMessagesAbovePlayers = not DisplayMessagesAbovePlayers
-
-	TriggerEvent('chat:addMessage', {
-		color = {255, 255, 128},
-		args = {'Overhead messages', DisplayMessagesAbovePlayers and 'on' or 'off'}
-	})
-
-	SetResourceKvp("displayMessagesAbovePlayers", DisplayMessagesAbovePlayers and "true" or "false")
-end, false)
-
-function AddGlobalMessage(name, color, message)
-	TriggerEvent('chat:addMessage', {color = color, args = {'[Global] ' .. name, message}})
-end
-
-AddEventHandler('poodlechat:globalMessage', function(id, license, name, color, message)
-	if MutedPlayers[license] then
-		return
-	end
-
-	AddGlobalMessage(name, color, message)
-
-	if DisplayMessagesAbovePlayers then
-		displayTextAbovePlayer(id, color, message)
-	end
-end)
 
 function AddLocalMessage(name, color, message)
 	TriggerEvent('chat:addMessage', {color = color, args = {'[Local] ' .. name, message}})
@@ -340,10 +252,6 @@ end
 function IsInProximity(id, distance)
 	local myId = PlayerId()
 	local pid = GetPlayerFromServerId(id)
-
-	if pid == -1 then
-		return false
-	end
 
 	if pid == myId then
 		return true
@@ -359,63 +267,27 @@ function IsInProximity(id, distance)
 	local myCoords = GetEntityCoords(myPed)
 	local coords = GetEntityCoords(ped)
 
-	return #(myCoords - coords) < distance
+	return GetDistanceBetweenCoords(myCoords, coords, true) < distance
 end
 
-AddEventHandler('poodlechat:localMessage', function(id, license, name, color, message)
-	if MutedPlayers[license] then
-		return
-	end
-
+AddEventHandler('poodlechat:localMessage', function(id, name, color, message)
 	if IsInProximity(id, Config.LocalMessageDistance) then
 		AddLocalMessage(name, color, message)
-
-		if DisplayMessagesAbovePlayers then
-			displayTextAbovePlayer(id, color, message)
-		end
 	end
 end)
 
-AddEventHandler('poodlechat:action', function(id, license, name, message)
-	if MutedPlayers[license] then
-		return
-	end
-
+AddEventHandler('poodlechat:action', function(id, name, message)
 	if IsInProximity(id, Config.ActionDistance) then
-		TriggerEvent('chat:addMessage', {color = Config.ActionColor, args = {'^*' .. name .. '^r^* ' .. message}})
-
-		if DisplayMessagesAbovePlayers then
-			displayTextAbovePlayer(id, Config.ActionColor, '*' .. message .. '*')
-		end
+		TriggerEvent('chat:addMessage', {color = Config.ActionColor, args = {'^*' .. name .. ' ' .. message}})
 	end
 end)
 
-AddEventHandler('poodlechat:whisperEcho', function(id, license, name, message)
-	if MutedPlayers[license] then
-		TriggerEvent('chat:addMessage', {
-			color = {255, 0, 0},
-			args = {'Error', name .. ' is muted'}
-		})
-		return
-	end
-
+AddEventHandler('poodlechat:whisperEcho', function(id, name, message)
 	TriggerEvent('chat:addMessage', {color = Config.WhisperEchoColor, args = {'[Whisper@' .. name .. ']', message}})
-
-	if DisplayMessagesAbovePlayers then
-		displayTextAbovePlayer(GetPlayerServerId(PlayerId()), Config.WhisperColor, message)
-	end
 end)
 
-AddEventHandler('poodlechat:whisper', function(id, license, name, message)
-	if MutedPlayers[license] then
-		return
-	end
-
+AddEventHandler('poodlechat:whisper', function(id, name, message)
 	TriggerEvent('chat:addMessage', {color = Config.WhisperColor, args = {'[Whisper] ' .. name, message}})
-
-	if DisplayMessagesAbovePlayers then
-		displayTextAbovePlayer(id, Config.WhisperColor, message)
-	end
 end)
 
 AddEventHandler('poodlechat:whisperError', function(id)
@@ -425,14 +297,14 @@ end)
 function ReplyCommand(source, args, user)
 	if ReplyTo then
 		local message = table.concat(args, " ")
-		TriggerServerEvent('poodlechat:whisperMessage', ReplyTo, message)
+		TriggerServerEvent('poodlechat:reply', ReplyTo, message)
 	else
 		TriggerEvent('chat:addMessage', {color = {255, 0, 0}, args = {'Error', 'No-one to reply to'}})
 	end
 end
 
-RegisterCommand('reply', ReplyCommand, false)
-RegisterCommand('r', ReplyCommand, false)
+--[[ RegisterCommand('reply', ReplyCommand, false)
+RegisterCommand('r', ReplyCommand, false) ]]
 
 AddEventHandler('poodlechat:setReplyTo', function(id)
 	ReplyTo = tostring(id)
@@ -490,43 +362,19 @@ function CycleChannel()
 	SetChannel(Channel)
 end
 
-function SortEmoji()
-	local sortedEmoji = {}
-
-	for i = 1, #Emoji do
-		sortedEmoji[i] = Emoji[i]
-	end
-
-	table.sort(sortedEmoji, function(a, b)
-		aUsage = EmojiUsage[a[2]] or 0
-		bUsage = EmojiUsage[b[2]] or 0
-
-		return aUsage > bUsage
-	end)
-
-	return sortedEmoji
-end
-
 RegisterNUICallback('onLoad', function(data, cb)
 	SetChannel(Channel)
 	cb({
 		localColor = Config.DefaultLocalColor,
 		globalColor = Config.DefaultGlobalColor,
 		staffColor = Config.DefaultStaffColor,
-		emoji = SortEmoji()
+		emoji = json.encode(Emoji)
 	})
 end)
 
 RegisterNUICallback('cycleChannel', function(data, cb)
 	CycleChannel()
 	cb({})
-end)
-
-RegisterNUICallback('useEmoji', function(data, cb)
-	local usage = EmojiUsage[data.emoji] or 0
-	EmojiUsage[data.emoji] = usage + 1
-	cb(SortEmoji())
-	SetResourceKvp('emojiUsage', json.encode(EmojiUsage))
 end)
 
 RegisterCommand('togglechat', function(source, args, raw)
@@ -543,17 +391,6 @@ RegisterCommand('staff', function(source, args, raw)
 	TriggerServerEvent('poodlechat:staffMessage', message)
 end)
 
-AddEventHandler('poodlechat:staffMessage', function(id, name, color, message)
-	TriggerEvent('chat:addMessage', {
-		color = color,
-		args = {'[Staff] ' .. name, message}
-	})
-
-	if DisplayMessagesAbovePlayers then
-		displayTextAbovePlayer(id, color, message)
-	end
-end)
-
 AddEventHandler('poodlechat:setPermissions', function(permissions)
 	Permissions = permissions
 
@@ -563,7 +400,7 @@ AddEventHandler('poodlechat:setPermissions', function(permissions)
 	})
 end)
 
-RegisterCommand('report', function(source, args, raw)
+--[[ RegisterCommand('report', function(source, args, raw)
 	if #args < 2 then
 		TriggerEvent('chat:addMessage', {
 			color = {255, 0, 0},
@@ -576,179 +413,49 @@ RegisterCommand('report', function(source, args, raw)
 	local reason = table.concat(args, ' ')
 
 	TriggerServerEvent('poodlechat:report', player, reason)
-end, false)
-
-RegisterCommand('mute', function(source, args, raw)
-	if #args < 1 then
-		TriggerEvent('chat:addMessage', {
-			color = {255, 0, 0},
-			args = {'Error', 'You must specify a player to mute'}
-		})
-		return
-	end
-
-	local player = args[1]
-
-	TriggerServerEvent('poodlechat:mute', player)
-end, false)
-
-AddEventHandler('poodlechat:mute', function(id, license)
-	local name = GetPlayerName(GetPlayerFromServerId(id))
-
-	MutedPlayers[license] = name
-
-	TriggerEvent('chat:addMessage', {
-		color = {255, 255, 128},
-		args = {name .. ' was muted'}
-	})
-
-	SetResourceKvp('mutedPlayers', json.encode(MutedPlayers))
-end)
-
-RegisterCommand('unmute', function(source, args, raw)
-	if #args < 1 then
-		TriggerEvent('chat:addMessage', {
-			color = {255, 0, 0},
-			args = {'Error', 'You must specify a player to unmute'}
-		})
-		return
-	end
-
-	local player = args[1]
-
-	TriggerServerEvent('poodlechat:unmute', player)
-end)
-
-AddEventHandler('poodlechat:unmute', function(id, license)
-	local name = GetPlayerName(GetPlayerFromServerId(id))
-
-	MutedPlayers[license] = nil
-
-	TriggerEvent('chat:addMessage', {
-		color = {255, 255, 128},
-		args = {name .. ' was unmuted'}
-	})
-
-	SetResourceKvp('mutedPlayers', json.encode(MutedPlayers))
-end)
-
-RegisterCommand('muted', function(source, args, raw)
-	TriggerServerEvent('poodlechat:showMuted', MutedPlayers)
-end)
-
-AddEventHandler('poodlechat:showMuted', function(mutedPlayerIds)
-	local muted = {}
-
-	table.sort(mutedPlayerIds)
-
-	for _, id in ipairs(mutedPlayerIds) do
-		local name = GetPlayerName(GetPlayerFromServerId(id))
-		table.insert(muted, string.format('%s [%d]', name, id))
-	end
-
-	if #muted == 0 then
-		TriggerEvent('chat:addMessage', {
-			color = {255, 255, 128},
-			args = {'No players are muted'}
-		})
-	else
-		TriggerEvent('chat:addMessage', {
-			color = {255, 255, 128},
-			args = {'Muted', table.concat(muted, ', ')}
-		})
-	end
-end)
-
-function LoadSavedSettings()
-	local mutedJson = GetResourceKvpString('mutedPlayers')
-
-	if mutedJson then
-		MutedPlayers = json.decode(mutedJson)
-	end
-
-	local emojiUsageJson = GetResourceKvpString('emojiUsage')
-
-	if emojiUsageJson then
-		EmojiUsage = json.decode(emojiUsageJson)
-	end
-
-	local displayMessagesAbovePlayers = GetResourceKvpString('displayMessagesAbovePlayers')
-
-	if displayMessagesAbovePlayers then
-		DisplayMessagesAbovePlayers = displayMessagesAbovePlayers == 'true'
-	end
-end
-
-function AddEmojiSuggestions()
-	for i = 1, #Emoji do
-		for k = 1, #Emoji[i][1] do
-			TriggerEvent('chat:addSuggestion', Emoji[i][1][k], Emoji[i][2])
-		end
-	end
-end
+end, false) ]]
 
 CreateThread(function()
 	TriggerServerEvent('poodlechat:getPermissions')
 
-	LoadSavedSettings()
-
 	-- Command documentation
-	TriggerEvent('chat:addSuggestion', '/clear', 'Clear chat window')
-
-	TriggerEvent('chat:addSuggestion', '/global', 'Send a message to all players', {
+	TriggerEvent('chat:addSuggestion', '/clear', 'Clear chat window', {})
+	--[[ TriggerEvent('chat:addSuggestion', '/global', 'Send a message to all players', {
+		{name = 'message', help = 'The message to send'}
+	}) ]]
+	--[[ TriggerEvent('chat:addSuggestion', '/g', 'Send a message to all players', {
 		{name = 'message', help = 'The message to send'}
 	})
-	TriggerEvent('chat:addSuggestion', '/g', 'Send a message to all players', {
-		{name = 'message', help = 'The message to send'}
-	})
-
 	TriggerEvent('chat:addSuggestion', '/me', 'Perform an action', {
 		{name = 'action', help = 'The action to perform'}
 	})
-
-	TriggerEvent('chat:addSuggestion', '/mute', 'Mute a player, hiding their messages in text chat', {
-		{name = 'player', help = 'ID or name of the player to mute'}
-	})
-
-	TriggerEvent('chat:addSuggestion', '/muted', 'Show a list of muted players')
-
-	TriggerEvent('chat:addSuggestion', '/nick', 'Set a nickname used for chat messages', {
-		{name = 'nickname', help = 'The new nickname to use. Omit to unset your current nickname.'}
-	})
-
 	TriggerEvent('chat:addSuggestion', '/reply', 'Reply to the last whisper', {
 		{name = 'message', help = 'The message to send'}
 	})
 	TriggerEvent('chat:addSuggestion', '/r', 'Reply to the last whisper', {
 		{name = 'message', help = 'The message to send'}
-	})
+	}) ]]
 
-	TriggerEvent('chat:addSuggestion', '/report', 'Report another player for abuse', {
+	--[[ TriggerEvent('chat:addSuggestion', '/report', 'Report another player for abuse', {
 		{name = 'player', help = 'ID or name of the player to report'},
 		{name = 'reason', help = 'Reason you are reporting this player'}
 	})
 
 	TriggerEvent('chat:addSuggestion', '/say', 'Send a message to nearby players', {
 		{name = "message", help = "The message to send"}
-	})
-
-	TriggerEvent('chat:addSuggestion', '/togglechat', 'Toggle the chat on/off')
-
-	TriggerEvent('chat:addSuggestion', '/unmute', 'Unmute a player, allowing you to see their messages in text chat again', {
-		{name = 'player', help = 'ID or name of the player to unmute'}
-	})
-
-	TriggerEvent('chat:addSuggestion', '/whisper', 'Send a private message', {
+	}) ]]
+	TriggerEvent('chat:addSuggestion', '/togglechat', 'Toggle the chat on/off', {})
+	--[[ TriggerEvent('chat:addSuggestion', '/whisper', 'Send a private message', {
 		{name = "player", help = "ID or name of the player to message"},
 		{name = "message", help = "The message to send"}
-	})
-	TriggerEvent('chat:addSuggestion', '/w', 'Send a private message', {
+	}) ]]
+	--[[ TriggerEvent('chat:addSuggestion', '/w', 'Send a private message', {
 		{name = "player", help = "ID or name of the player to message"},
 		{name = "message", help = "The message to send"}
-	})
+	}) ]]
 
 	-- Emoji suggestions
-	AddEmojiSuggestions()
+	--AddEmojiSuggestions()
 
 	SetTextChatEnabled(false)
 	SetNuiFocus(false)
@@ -765,8 +472,6 @@ CreateThread(function()
 					type = 'ON_OPEN'
 				})
 			end
-		elseif IsControlJustReleased(0, isRDR and `INPUT_MP_TEXT_CHAT_ALL` or 245) then
-			SetNuiFocus(true, true)
 		end
 
 		if chatInputActivating then

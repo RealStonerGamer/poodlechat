@@ -1,3 +1,11 @@
+
+local VORPcore = {}
+
+TriggerEvent("getCore", function(core)
+    VORPcore = core
+end)
+
+
 RegisterServerEvent('chat:init')
 RegisterServerEvent('chat:addTemplate')
 RegisterServerEvent('chat:addMessage')
@@ -6,98 +14,23 @@ RegisterServerEvent('chat:removeSuggestion')
 RegisterServerEvent('_chat:messageEntered')
 RegisterServerEvent('chat:clear')
 RegisterServerEvent('__cfx_internal:commandFallback')
-RegisterNetEvent('playerJoining')
 
-local VORP = ServerConfig.Framework == 'VORP' and exports.vorp_core:vorpAPI()
 
-local nicknames = json.decode(GetResourceKvpString('nicknames')) or {}
-
-function GetNickname(source)
-	local identifier = GetIDFromSource(ServerConfig.Identifier, source)
-
-	if identifier then
-		return nicknames[identifier]
-	end
-end
-
-function HasNickname(source)
-	local identifier = GetIDFromSource(ServerConfig.Identifier, source)
-
-	if identifier then
-		return nicknames[identifier] ~= nil
+RegisterCommand('clearall', function(source, args, user)
+	local _source = source
+	local User = VORPcore.getUser(_source) -- Return User with functions and all characters
+	local group = User.getGroup -- Return user group (not character group)
+    local hideoutid = args[1]
+	if group == "moderator" or group == "admin" then
+		TriggerClientEvent('chat:clearall', -1) -- Send the clearall event to all players
 	else
-		return false
+		VORPcore.NotifyRightTip(_source,"You need to be an admin or moderator to use this command",4000)
+
 	end
-end
+end, false)
 
-function SetNickname(source, nickname)
-	local identifier = GetIDFromSource(ServerConfig.Identifier, source)
 
-	if identifier then
-		nicknames[identifier] = nickname
-		SetResourceKvp('nicknames', json.encode(nicknames))
-		return true
-	else
-		return false
-	end
-end
 
-function GetRealName(source)
-	return GetPlayerName(source) or '?'
-end
-
-function GetName(source)
-	if VORP then
-		local char = VORP.getCharacter(source)
-		return char.firstname .. ' ' .. char.lastname
-	elseif HasNickname(source) then
-		return GetNickname(source)
-	else
-		return GetRealName(source)
-	end
-end
-
---- Get a player's chat name.
--- @function getName
--- @param source The server ID of the player.
--- @return The player's chat name, which may be their real name, character name or nickname, whichever appears in chat.
--- @usage local name = exports.poodlechat:getName(1)
-exports("getName", GetName)
-
-function GetNameWithId(source)
-	return '[' .. source .. '] ' .. GetName(source)
-end
-
-RegisterCommand("nick", function(source, args, raw)
-	local nickname = args[1] and table.concat(args, ' ')
-
-	if nickname and string.len(nickname) > ServerConfig.MaxNicknameLen then
-		TriggerClientEvent('chat:addMessage', source, {
-			color = {255, 0 ,0},
-			args = {'Error', 'Nicknames cannot be more than ' .. ServerConfig.MaxNicknameLen .. ' characters long'}
-		})
-		return
-	end
-
-	if SetNickname(source, nickname) then
-		if nickname then
-			TriggerClientEvent('chat:addMessage', source, {
-				color = {255, 255, 128},
-				args = {'Your nickname was set to ' .. nickname}
-			})
-		else
-			TriggerClientEvent('chat:addMessage', source, {
-				color = {255, 255, 128},
-				args = {'Your nickname has been unset'}
-			})
-		end
-	else
-		TriggerClientEvent('chat:addMessage', source, {
-			color = {255, 0, 0},
-			args = {'Error', 'Failed to set nickname'}
-		})
-	end
-end, true)
 
 AddEventHandler('_chat:messageEntered', function(author, color, message, channel)
     if not message or not author then
@@ -109,29 +42,31 @@ AddEventHandler('_chat:messageEntered', function(author, color, message, channel
     if not WasEventCanceled() then
         TriggerClientEvent('chatMessage', -1, author,  { 255, 255, 255 }, message)
     end
+
+    print(author .. '^7: ' .. message .. '^7')
 end)
 
 AddEventHandler('__cfx_internal:commandFallback', function(command)
-    local name = GetNameWithId(source)
+    local name = GetPlayerName(source)
 
     TriggerEvent('chatMessage', source, name, '/' .. command)
 
     if not WasEventCanceled() then
-        TriggerClientEvent('chatMessage', -1, name, { 255, 255, 255 }, '/' .. command)
+        TriggerClientEvent('chatMessage', -1, name, { 255, 255, 255 }, '/' .. command) 
     end
 
     CancelEvent()
 end)
 
 -- player join messages
-AddEventHandler('chat:init', function()
-    TriggerClientEvent('chatMessage', -1, '', { 255, 255, 255 }, '^2* ' .. GetName(source) .. '^r^2 joined.')
+--[[ AddEventHandler('chat:init', function()
+    TriggerClientEvent('chatMessage', -1, '', { 255, 255, 255 }, '^2* ' .. GetPlayerName(source) .. ' joined.')
 end)
 
 AddEventHandler('playerDropped', function(reason)
-    TriggerClientEvent('chatMessage', -1, '', { 255, 255, 255 }, '^2* ' .. GetName(source) .. '^r^2 left (' .. reason .. ')')
+    TriggerClientEvent('chatMessage', -1, '', { 255, 255, 255 }, '^2* ' .. GetPlayerName(source) ..' left (' .. reason .. ')')
 end)
-
+ ]]
 -- command suggestions for clients
 local function refreshCommands(player)
     if GetRegisteredCommands then
@@ -165,18 +100,32 @@ AddEventHandler('onServerResourceStart', function(resName)
 end)
 
 -- API URLs
+local DISCORD_API = 'https://discord.com/api'
 local DISCORD_CDN = 'https://cdn.discordapp.com/avatars/'
 local STEAM_API = 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key='
 
+RegisterNetEvent('poodlechat:reply')
 RegisterNetEvent('poodlechat:staffMessage')
 RegisterNetEvent('poodlechat:globalMessage')
 RegisterNetEvent('poodlechat:actionMessage')
 RegisterNetEvent('poodlechat:whisperMessage')
 RegisterNetEvent('poodlechat:getPermissions')
 RegisterNetEvent('poodlechat:report')
-RegisterNetEvent('poodlechat:mute')
-RegisterNetEvent('poodlechat:unmute')
-RegisterNetEvent('poodlechat:showMuted')
+
+-- Queue to rate limit Discord requests
+local DiscordQueue = {}
+
+function EnqueueDiscordRequest(cb)
+	table.insert(DiscordQueue, 1, cb)
+end
+
+function ProcessDiscordQueue()
+	local cb = table.remove(DiscordQueue)
+
+	if cb then
+		cb()
+	end
+end
 
 local LogColors = {
 	['name'] = '\x1B[35m',
@@ -193,7 +142,7 @@ function Log(label, message)
 		color = LogColors.default
 	end
 
-	print(string.format('%s[%s]%s %s', color, label, LogColors.default, message))
+	print(string.format('%s[PoodleChat] %s[%s]%s %s', LogColors.name, color, label, LogColors.default, message))
 end
 
 function GetIDFromSource(Type, ID)
@@ -219,7 +168,7 @@ function stringsplit(inputstr, sep)
 	return t
 end
 
-function SendToDiscord(message, color)
+function SendToDiscord(name, message, color)
 	local connect = {
 		{
 			["color"] = color,
@@ -227,15 +176,36 @@ function SendToDiscord(message, color)
 		}
 	}
 
-	exports.discord_rest:executeWebhook(ServerConfig.DiscordWebhookId, ServerConfig.DiscordWebhookToken, {
-		username = ServerConfig.DiscordName,
-		embeds = connect,
-		avatar_url = ServerConfig.DiscordAvatar
-	})
+	EnqueueDiscordRequest(function()
+		PerformHttpRequest(
+			DISCORD_API..'/webhooks/'..ServerConfig.DiscordWebhookId..'/'.. ServerConfig.DiscordWebhookToken,
+			function(status, text, headers) end,
+			'POST',
+			json.encode({
+				username = ServerConfig.DiscordName,
+				embeds = connect,
+				avatar_url = ServerConfig.DiscordAvatar
+			}),
+			{['Content-Type'] = 'application/json' })
+	end)
+	--PerformHttpRequest(
+	--	DISCORD_API .. '/channels/' .. ServerConfig.DiscordChannel .. '/messages',
+	--	function(status, text, headers)
+	--	end,
+	--	'POST',
+	--	json.encode({
+	--		username = ServerConfig.DiscordName,
+	--		embeds = connect,
+	--		avatar_url = ServerConfig.DiscordAvatar
+	--	}),
+	--	{
+	--		['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken,
+	--		['Content-Type'] = 'application/json'
+	--	})
 end
 
 function GetNameWithRoleAndColor(source)
-	local name = GetName(source)
+	local name = GetPlayerName(source)
 	local role = nil
 
 	for i = 1, #ServerConfig.Roles do
@@ -246,19 +216,10 @@ function GetNameWithRoleAndColor(source)
 	end
 
 	if role then
-		return '[' .. source .. '] ' .. role.name .. ' | ' .. name, role.color
+		return role.name .. ' | ' .. name, role.color
 	else
-		return '[' .. source .. '] ' .. name, nil
+		return name, nil
 	end
-end
-
-function Emojit(text)
-	for i = 1, #Emoji do
-		for k = 1, #Emoji[i][1] do
-			text = string.gsub(text, Emoji[i][1][k], Emoji[i][2])
-		end
-	end
-	return text
 end
 
 function LocalMessage(source, message)
@@ -274,31 +235,35 @@ function LocalMessage(source, message)
 		color = Config.DefaultLocalColor
 	end
 
-	local license
-
-	if not IsPlayerAceAllowed(source, ServerConfig.NoMuteAce) then
-		license = GetIDFromSource(ServerConfig.Identifier, source)
-	else
-		license = false
-	end
-
-	TriggerClientEvent('poodlechat:localMessage', -1, source, license, name, color, message)
-
-	if ServerConfig.PrintToConsole then
-		print(('^5[Local] %s^7: %s^7'):format(name, message))
-	end
+	TriggerClientEvent('poodlechat:localMessage', -1, source, name, color, message)
 end
 
 function SendUserMessageToDiscord(source, name, message, avatar)
 	local data = {}
-	data.username = name
+	data.username = name .. ' [' .. source .. ']'
 	data.content = message
 	if avatar then
 		data.avatar_url = avatar
 	end
 	data.tts = false
 
-	exports.discord_rest:executeWebhook(ServerConfig.DiscordWebhookId, ServerConfig.DiscordWebhookToken, data)
+	EnqueueDiscordRequest(function()
+		PerformHttpRequest(
+			DISCORD_API..'/webhooks/'..ServerConfig.DiscordWebhookId..'/'..ServerConfig.DiscordWebhookToken,
+			function(status, text, headers) end,
+			'POST',
+			json.encode(data),
+			{['Content-Type'] = 'application/json'})
+	end)
+	--PerformHttpRequest(
+	--	DISCORD_API .. '/channels/' .. ServerConfig.DiscordChannel .. '/messages',
+	--	function(status, text, headers) end,
+	--	'POST',
+	--	json.encode(data),
+	--	{
+	--		['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken,
+	--		['Content-Type'] = 'application/json'
+	--	})
 end
 
 function SendMessageWithDiscordAvatar(source, name, message)
@@ -309,9 +274,12 @@ function SendMessageWithDiscordAvatar(source, name, message)
 	local id = GetIDFromSource('discord', source)
 
 	if id then
-		exports.discord_rest:getUser(id, ServerConfig.DiscordBotToken):next(function(user)
-			local avatar = DISCORD_CDN .. id .. '/' .. user.avatar .. '.png'
-			SendUserMessageToDiscord(source, name, message, avatar)
+		EnqueueDiscordRequest(function()
+			PerformHttpRequest(DISCORD_API .. '/users/' .. id, function(status, text, headers)
+				local hash = json.decode(text)['avatar']
+				local avatar = DISCORD_CDN .. id .. '/' .. hash .. '.png'
+				SendUserMessageToDiscord(source, name, message, avatar)
+			end, 'GET', '', {['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken})
 		end)
 
 		return true
@@ -352,19 +320,7 @@ function GlobalMessage(source, message)
 		color = Config.DefaultGlobalColor
 	end
 
-	local license
-
-	if not IsPlayerAceAllowed(source, ServerConfig.NoMuteAce) then
-		license = GetIDFromSource(ServerConfig.Identifier, source)
-	else
-		license = false
-	end
-
-	TriggerClientEvent('poodlechat:globalMessage', -1, source, license, name, color, message)
-
-	if ServerConfig.PrintToConsole then
-		print(('^3[Global] %s^7: %s^7'):format(name, message))
-	end
+	TriggerClientEvent('chat:addMessage', -1, {color = color, args = {'[Global] ' .. name, message}})
 
 	-- Send global messages to Discord
 	if IsDiscordSendEnabled() then
@@ -394,15 +350,15 @@ function LocalCommand(source, args, raw)
 	LocalMessage(source, message)
 end
 
-RegisterCommand('say', function(source, args, raw)
+--[[ RegisterCommand('say', function(source, args, raw)
 	-- If source is a player, send a local message
 	if source and source > 0 then
 		LocalCommand(source, args, raw)
 	-- If source is console, send to all players
 	else
-		TriggerClientEvent('chat:addMessage', -1, {color = {255, 255, 255}, args = {'console', table.concat(args, ' ')}})
+		TriggerClientEvent('chat:addMessage', -1, {color = {255, 255, 255}, args = {'console', message}})
 	end
-end, true)
+end, true) ]]
 
 -- Send messages to current channel by default
 AddEventHandler('chatMessage', function(source, name, message, channel)
@@ -419,7 +375,7 @@ AddEventHandler('chatMessage', function(source, name, message, channel)
 end)
 
 AddEventHandler('poodlechat:actionMessage', function(message)
-	local name = GetName(source)
+	local name = GetPlayerName(source)
 
 	if message == '' then
 		return
@@ -427,19 +383,7 @@ AddEventHandler('poodlechat:actionMessage', function(message)
 
 	message = Emojit(message)
 
-	local license
-
-	if not IsPlayerAceAllowed(source, ServerConfig.NoMuteAce) then
-		license = GetIDFromSource(ServerConfig.Identifier, source)
-	else
-		license = false
-	end
-
-	TriggerClientEvent("poodlechat:action", -1, source, license, name, message)
-
-	if ServerConfig.PrintToConsole then
-		print(('^6%s %s^7'):format(name, message))
-	end
+	TriggerClientEvent("poodlechat:action", -1, source, name, message)
 end, false)
 
 function GetPlayerId(id)
@@ -454,7 +398,7 @@ function GetPlayerId(id)
 	id = string.lower(id)
 
 	for _, playerId in ipairs(GetPlayers()) do
-		if string.lower(GetName(playerId)) == id then
+		if string.lower(GetPlayerName(playerId)) == id then
 			return playerId
 		end
 	end
@@ -471,41 +415,23 @@ AddEventHandler('poodlechat:whisperMessage', function(id, message)
 
 	message = Emojit(message)
 
-	local target = GetPlayerId(id)
+	id = GetPlayerId(id)
 
-	if target then
-		local sendLicense
-		local recvLicense
-
-		if not IsPlayerAceAllowed(source, ServerConfig.NoMuteAce) then
-			sendLicense = GetIDFromSource(ServerConfig.Identifier, source)
-		else
-			sendLicense = false
-		end
-
-		if not IsPlayerAceAllowed(target, ServerConfig.NoMuteAce) then
-			recvLicense = GetIDFromSource(ServerConfig.Identifier, target)
-		else
-			recvLicense = false
-		end
-
+	if id then
 		-- Echo the message to the sender's chat
-		TriggerClientEvent('poodlechat:whisperEcho', source, target, recvLicense, GetNameWithId(target), message)
+		TriggerClientEvent('poodlechat:whisperEcho', source, id, GetPlayerName(id), message)
 		-- Send the message to the recipient
-		TriggerClientEvent('poodlechat:whisper', target, source, sendLicense, name, message)
+		TriggerClientEvent('poodlechat:whisper', id, source, name, message)
 		-- Set the /reply target for sender and recipient
-		TriggerClientEvent('poodlechat:setReplyTo', target, source)
-		TriggerClientEvent('poodlechat:setReplyTo', source, target)
-
-		local sendName = GetRealName(source)
-		local recvName = GetRealName(target)
-
-		if ServerConfig.PrintToConsole then
-			print(('^9[Whisper] %s -> %s^7: %s^7'):format(sendName, recvName, message))
-		end
+		TriggerClientEvent('poodlechat:setReplyTo', id, source)
+		TriggerClientEvent('poodlechat:setReplyTo', source, id)
 	else
 		TriggerClientEvent('poodlechat:whisperError', source, id)
 	end
+end)
+
+AddEventHandler('poodlechat:reply', function(target, message)
+	Whisper(source, target, message)
 end)
 
 function StaffMessage(source, message)
@@ -517,12 +443,6 @@ function StaffMessage(source, message)
 		return
 	end
 
-	if message == '' then
-		return
-	end
-
-	message = Emojit(message)
-
 	local name, color = GetNameWithRoleAndColor(source)
 
 	if not color then
@@ -531,12 +451,11 @@ function StaffMessage(source, message)
 
 	for _, playerId in ipairs(GetPlayers()) do
 		if IsPlayerAceAllowed(playerId, ServerConfig.StaffChannelAce) then
-			TriggerClientEvent('poodlechat:staffMessage', playerId, source, name, color, message)
+			TriggerClientEvent('chat:addMessage', playerId, {
+				color = color,
+				args = {'[Staff] ' .. name, message}
+			});
 		end
-	end
-
-	if ServerConfig.PrintToConsole then
-		print(('^1[Staff] %s^7: %s^7'):format(name, message))
 	end
 end
 
@@ -565,10 +484,10 @@ function IsResponseOk(status)
 end
 
 function SendReportToDiscord(source, id, reason)
-	local reporterName = GetName(source)
-	local reporteeName = GetName(id)
-	local reporterLicense = GetIDFromSource(ServerConfig.Identifier, source)
-	local reporteeLicense = GetIDFromSource(ServerConfig.Identifier, id)
+	local reporterName = GetPlayerName(source)
+	local reporteeName = GetPlayerName(id)
+	local reporterLicense = GetIDFromSource('license', source)
+	local reporteeLicense = GetIDFromSource('license', id)
 	local reporterIp = GetPlayerEndpoint(source)
 	local reporteeIp = GetPlayerEndpoint(id)
 
@@ -593,18 +512,49 @@ function SendReportToDiscord(source, id, reason)
 		}
 	}
 
-	exports.discord_rest:executeWebhookUrl(ServerConfig.DiscordReportWebhook, data):next(function()
-		TriggerClientEvent('chat:addMessage', source, {
-			color = ServerConfig.DiscordReportFeedbackColor,
-			args = {ServerConfig.DiscordReportFeedbackSuccessMessage}
-		})
-	end, function()
-		Log('error', string.format('Failed to send report: %d %s %s\n%s', status, text, json.encode(headers), message))
+	EnqueueDiscordRequest(function()
+		PerformHttpRequest(
+			ServerConfig.DiscordReportWebhook,
+			function(status, text, headers)
+				-- If there is an error, fallback to printing the report in the server console
+				if IsResponseOk(status) then
+					TriggerClientEvent('chat:addMessage', source, {
+						color = ServerConfig.DiscordReportFeedbackColor,
+						args = {ServerConfig.DiscordReportFeedbackSuccessMessage}
+					})
+				else
+					Log('error', string.format('Failed to send report: %d %s %s\n%s', status, text, json.encode(headers), message))
 
-		TriggerClientEvent('chat:addMessage', source, {
-			color = ServerConfig.DiscordReportFeedbackColor,
-			args = {ServerConfig.DiscordReportFeedbackFailureMessage}
-		})
+					TriggerClientEvent('chat:addMessage', source, {
+						color = ServerConfig.DiscordReportFeedbackColor,
+						args = {ServerConfig.DiscordReportFeedbackFailureMessage}
+					})
+				end
+			end,
+			'POST',
+			json.encode(data),
+			{['Content-Type'] = 'application/json'})
+		--[[
+		PerformHttpRequest(
+			DISCORD_API .. '/channels/' .. ServerConfig.DiscordReportChannel .. '/messages',
+			function(status, text, headers)
+				-- If there is an error, fallback to printing the report in the server console
+				if IsResponseOk(status) then
+					Log('error', string.format('Failed to send report: %d %s %s\n%s', status, text, json.encode(headers), message))
+				end
+
+				TriggerClientEvent('chat:addMessage', source, {
+					color = ServerConfig.DiscordReportFeedbackColor,
+					args = {ServerConfig.DiscordReportFeedbackMessage}
+				})
+			end,
+			'POST',
+			json.encode(data),
+			{
+				['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken,
+				['Content-Type'] = 'application/json'
+			})
+		]]
 	end)
 end
 
@@ -629,84 +579,23 @@ AddEventHandler('poodlechat:report', function(player, reason)
 	end
 end)
 
-AddEventHandler('poodlechat:mute', function(player)
-	local id = tonumber(GetPlayerId(player))
-
-	if id then
-		local license = GetIDFromSource(ServerConfig.Identifier, id)
-
-		if license then
-			TriggerClientEvent('poodlechat:mute', source, id, license)
-		else
-			TriggerClientEvent('chat:addMessage', source, {
-				color = {255, 0, 0},
-				args = {'Error', 'Failed to mute player'}
-			})
-		end
-	else
-		TriggerClientEvent('chat:addMessage', source, {
-			color = {255, 0, 0},
-			args = {'Error', 'No player with ID or name ' .. player .. ' exists'}
-		})
-	end
+AddEventHandler('playerConnecting', function() 
+	SendToDiscord("Server Login", "**" .. GetPlayerName(source) .. "** is connecting to the server.", 65280)
 end)
 
-AddEventHandler('poodlechat:unmute', function(player)
-	local id = tonumber(GetPlayerId(player))
-
-	if id then
-		local license = GetIDFromSource(ServerConfig.Identifier, id)
-		TriggerClientEvent('poodlechat:unmute', source, id, license)
-	else
-		TriggerClientEvent('chat:addMessage', source, {
-			color = {255, 0, 0},
-			args = {'Error', 'No player with ID or name ' .. player .. ' exists'}
-		})
-	end
-end)
-
-AddEventHandler('poodlechat:showMuted', function(mutedPlayers)
-	local players = GetPlayers()
-
-	local mutedPlayerIds = {}
-
-	for license, name in pairs(mutedPlayers) do
-		for _, id in ipairs(players) do
-			if GetIDFromSource(ServerConfig.Identifier, id) == license then
-				table.insert(mutedPlayerIds, tonumber(id))
-			end
-		end
-	end
-
-	TriggerClientEvent('poodlechat:showMuted', source, mutedPlayerIds)
-end)
-
-AddEventHandler('playerJoining', function()
-	if IsDiscordSendEnabled() then
-		SendToDiscord("**" .. GetName(source) .. "** is connecting to the server.", 65280)
-	end
-end)
-
-AddEventHandler('playerDropped', function(reason)
+AddEventHandler('playerDropped', function(reason) 
 	local color = 16711680
 	if string.match(reason, "Kicked") or string.match(reason, "Banned") then
 		color = 16007897
 	end
-
-	if IsDiscordSendEnabled() then
-		SendToDiscord("**" .. GetName(source) .. "** has left the server. \n Reason: " .. reason, color)
-	end
+	SendToDiscord("Server Logout", "**" .. GetPlayerName(source) .. "** has left the server. \n Reason: " .. reason, color)
 end)
 
 -- Display Discord messages in in-game chat
 local LastMessageId = nil
 
-function DeleteDiscordMessage(message)
-	exports.discord_rest:deleteMessage(ServerConfig.DiscordChannel, message.id, ServerConfig.DiscordBotToken)
-end
-
 function DiscordMessage(message)
-	if message.author.id == ServerConfig.DiscordWebhookId then
+	if message.id == ServerConfig.DiscordWebhookId then
 		return
 	end
 
@@ -714,85 +603,92 @@ function DiscordMessage(message)
 		return
 	end
 
-	if string.sub(message.content, 1, #ServerConfig.ChatCommandPrefix) == ServerConfig.ChatCommandPrefix then
-		local principal = 'identifier.discord:' .. message.author.id
-
-		if IsPrincipalAceAllowed(principal, ServerConfig.ExecuteCommandsAce) then
-			local command = string.sub(message.content, #ServerConfig.ChatCommandPrefix + 1)
-			local commandName = string.match(command, "([^ ]+)")
-
-			if IsPrincipalAceAllowed(principal, 'command.' .. commandName) then
-				ExecuteCommand(string.sub(message.content, #ServerConfig.ChatCommandPrefix + 1))
-			else
-				Log('error', principal .. ' is not allowed to execute ' .. commandName .. ' from Discord')
-			end
-		else
-			Log('error', principal .. ' is not allowed to execute commands from Discord')
-		end
-
-		if ServerConfig.DeleteChatCommands then
-			DeleteDiscordMessage(message)
-		end
-	else
-		TriggerClientEvent('chat:addMessage', -1, {
-			color = ServerConfig.DiscordColor,
-			args = {'[Discord] ' .. message.author.username, message.content}
-		})
-
-		if ServerConfig.PrintToConsole then
-			print(('^2[Discord] %s^7: %s^7'):format(message.author.username, message.content))
-		end
-	end
+	TriggerClientEvent('chat:addMessage', -1, {
+		color = ServerConfig.DiscordColor,
+		args = {'[Discord] ' .. message.name, message.content}
+	})
 end
 
-local LastMessageId
-
 function GetDiscordMessages()
-	return exports.discord_rest:getChannelMessages(ServerConfig.DiscordChannel, {after = LastMessageId}, ServerConfig.DiscordBotToken):next(function(data)
-		if #data > 0 then
-			-- Extract messages from response
-			local messages = {}
+	PerformHttpRequest(
+		DISCORD_API ..'/channels/'..ServerConfig.DiscordChannel..'/messages?after='..LastMessageId,
+		function(status, text, headers)
+			if IsResponseOk(status) then
+				local data = json.decode(text)
 
-			for _, message in ipairs(data) do
-				table.insert(messages, message)
+				if #data > 0 then
+					-- Extract messages from response
+					local messages = {}
+					for _, message in ipairs(data) do
+						messages[message.id] = {
+							id = message.author.id,
+							name = message.author.username,
+							content = message.content
+						}
+					end
+
+					-- Sort by ID
+					local ids = {}
+					for id, message in pairs(messages) do
+						table.insert(ids, id)
+					end
+					table.sort(ids)
+
+					-- Send to in-game chat
+					for _, id in ipairs(ids) do
+						DiscordMessage(messages[id])
+					end
+
+					LastMessageId = ids[#ids]
+				end
+			else
+				Log('warning', string.format('Failed to receive messages: %d %s %s', status, text, json.encode(headers)))
 			end
 
-			-- Sort by ID
-			table.sort(messages, function(a, b)
-				return a.id < b.id
-			end)
-
-			-- Send to in-game chat
-			for _, message in ipairs(messages) do
-				DiscordMessage(message)
-			end
-
-			LastMessageId = messages[#messages].id
-		end
-	end, function(err)
-		Log('warning', ('Failed to receive messages: %d'):format(err))
-	end)
+			EnqueueDiscordRequest(GetDiscordMessages)
+		end,
+		'GET',
+		'',
+		{['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken})
 end
 
 -- Get the last message ID to start from
 function InitDiscordReceive()
-	return exports.discord_rest:getChannel(ServerConfig.DiscordChannel, ServerConfig.DiscordBotToken):next(function(channel)
-		Log('success', 'Ready to receive Discord messages!')
-		LastMessageId = channel.last_message_id
-	end, function(err)
-		Log('error', ('Failed to initialize: %d'):format(err))
-		Citizen.Wait(5000)
-	end)
+	PerformHttpRequest(
+		DISCORD_API .. '/channels/' .. ServerConfig.DiscordChannel .. '/messages?limit=1',
+		function(status, text, headers)
+			if IsResponseOk(status) then
+				local data = json.decode(text)
+
+				LastMessageId = data[#data].id
+
+				Log('success', 'Ready to receive Discord messages!')
+			else
+				Log('error', string.format('Failed to initialize: %d %s %s', status, text, json.encode(headers)))
+			end
+
+			if LastMessageId then
+				EnqueueDiscordRequest(GetDiscordMessages)
+			else
+				EnqueueDiscordRequest(InitDiscordReceive)
+			end
+		end,
+		'GET',
+		'',
+		{
+			['Authorization'] = 'Bot ' .. ServerConfig.DiscordBotToken
+		})
 end
 
-if IsDiscordReceiveEnabled() then
-	Citizen.CreateThread(function()
-		while not LastMessageId do
-			Citizen.Await(InitDiscordReceive())
+if IsDiscordEnabled() then
+	CreateThread(function()
+		if IsDiscordReceiveEnabled() then
+			EnqueueDiscordRequest(InitDiscordReceive)
 		end
 
 		while true do
-			Citizen.Await(GetDiscordMessages())
+			ProcessDiscordQueue()
+			Wait(ServerConfig.DiscordRateLimit)
 		end
 	end)
 end
